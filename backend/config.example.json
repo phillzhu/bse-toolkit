@@ -1,0 +1,35 @@
+{
+  "llm": {
+    "provider": "dashscope",
+    "dashscope": {
+      "apiKey": "YOUR_DASHSCOPE_API_KEY_HERE",
+      "fastModel": "qwen-flash",
+      "deepModel": "qwen-plus"
+    },
+    "openai": {
+      "apiKey": "YOUR_OPENAI_API_KEY_HERE",
+      "baseUrl": "https://api.openai.com/v1",
+      "deepModel": "gpt-4-turbo",
+      "fastModel": "gpt-3.5-turbo"
+    }
+  },
+  "ifind": {
+    "accessToken": "YOUR_IFIND_TOKEN_HERE",
+    "basicDataUrl": "https://quantapi.51ifind.com/api/v1/basic_data_service",
+    "historyDataUrl": "https://quantapi.51ifind.com/api/v1/history_data",
+    "reportQueryUrl": "https://quantapi.51ifind.com/api/v1/report_query",
+    "reportPeriod": "3",
+    "tableType": "1"
+  },
+  "ifindPayload": {
+    "codes": "920000.BJ,920001.BJ...",
+    "functionpara": {
+      "reportType": "901"
+    },
+    "beginrDate": "YYYY-MM-DD",
+    "endrDate": "YYYY-MM-DD",
+    "outputpara": "reportDate:Y,secName:Y,reportTitle:Y,pdfURL:Y"
+  },
+  "ticker": "920185.BJ",
+  "userInfo": "Default user info..."
+}

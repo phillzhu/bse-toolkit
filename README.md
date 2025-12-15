@@ -57,28 +57,36 @@ bsetoolkit v1.2/
 
 ### 首次设置
 
-在首次运行项目前，需要分别安装前端和后端的依赖。
+在首次运行项目前，需要完成以下配置和依赖安装。
 
-1.  **安装后端依赖**:
+1.  **创建并配置 `config.json` 文件**:
     ```bash
     # 进入后端目录
     cd "/Users/phillzhu/bsetoolkit v1.2/backend"
+    # 将模板文件复制为您的本地配置文件
+    cp config.example.json config.json
+    ```
+    复制后，请打开 `config.json` 文件，并将里面的占位符 (`YOUR_..._HERE`) 替换为您自己的真实密钥。
+
+2.  **安装后端依赖**:
+    ```bash
+    # 确保您仍在 backend 目录下
     # 安装 Python 依赖
     pip install fastapi uvicorn python-multipart requests pandas pdfplumber dashscope openai markdown jinja2 matplotlib
     ```
 
-2.  **安装前端依赖**:
+3.  **安装前端依赖**:
     ```bash
     # 进入前端目录
-    cd "/Users/phillzhu/bsetoolkit v1.2/frontend"
+    cd "../frontend"
     # 安装 Node.js 依赖
     npm install
     ```
     
-3.  **安装主控制器依赖**:
+4.  **安装主控制器依赖**:
     ```bash
     # 进入项目根目录
-    cd "/Users/phillzhu/bsetoolkit v1.2"
+    cd ".."
     # 安装 Node.js 依赖
     npm install
     ```
