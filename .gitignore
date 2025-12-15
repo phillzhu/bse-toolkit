@@ -33,3 +33,6 @@ backend/generated_reports/*.html
 backend/scripts/report/*.html
 backend/scripts/report/*.png
 backend/scripts/report/*.json
+
+# Secret config file - DO NOT COMMIT
+backend/config.json
