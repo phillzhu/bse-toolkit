@@ -300,10 +300,22 @@ def main(config: dict, start_date: str, end_date: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="生成北交所公告简报")
     today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    # Add a new --date argument
+    parser.add_argument("--date", type=str, default=None, help="指定单日日期，格式 YYYY-MM-DD。如果使用此参数，将忽略 --start-date 和 --end-date")
     parser.add_argument("--start-date", type=str, default=today_str, help="开始日期，格式 YYYY-MM-DD")
     parser.add_argument("--end-date", type=str, default=today_str, help="结束日期，格式 YYYY-MM-DD")
+    
     args = parser.parse_args()
     
+    # Logic to handle the new --date argument
+    start_date = args.start_date
+    end_date = args.end_date
+    
+    if args.date:
+        start_date = args.date
+        end_date = args.date
+        
     main_config = get_config()
     if main_config:
-        main(main_config, args.start_date, args.end_date)
+        main(main_config, start_date, end_date)
