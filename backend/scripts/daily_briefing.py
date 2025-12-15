@@ -1,5 +1,3 @@
-
-
 import requests
 import json
 import pandas as pd
@@ -8,7 +6,6 @@ import pdfplumber
 import time
 import os
 from datetime import datetime, timedelta
-from dashscope import Generation
 import argparse
 
 # ====================================================================
@@ -17,7 +14,6 @@ import argparse
 
 def get_config():
     """从项目根目录的 config.json 加载配置"""
-    # 脚本位于 backend/scripts/，配置文件位于 backend/
     config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -30,29 +26,27 @@ def get_config():
         return None
 
 # ====================================================================
-# 2. 函数定义 (从 Notebook 提取并优化)
+# 2. 函数定义 (重构后)
 # ====================================================================
 
 def extract_json_from_string(text: str) -> dict:
     """从模型返回的文本中稳健地提取JSON对象"""
     try:
-        # 寻找第一个 '{' 和最后一个 '}'
         start_index = text.find('{')
         end_index = text.rfind('}')
-
         if start_index != -1 and end_index != -1 and end_index > start_index:
             json_str = text[start_index : end_index + 1]
             return json.loads(json_str)
         else:
             print("  [解析警告] 未在模型返回的文本中找到有效的JSON结构。")
-            return {"error": "No valid JSON structure found in model output"}
+            return {"error": "No valid JSON structure found"}
     except (json.JSONDecodeError, TypeError):
         print("  [解析警告] 提取的字符串无法被解析为JSON。")
-        return {"error": "Failed to decode extracted string as JSON"}
+        return {"error": "Failed to decode string as JSON"}
 
-def get_announcements_from_ifind(config: dict, target_date: str) -> pd.DataFrame:
-    """使用配置和指定日期从iFind获取公告"""
-    print(f"--- 1. 正在从 iFind 获取 {target_date} 的公告数据 ---")
+def get_announcements_from_ifind(config: dict, start_date: str, end_date: str) -> pd.DataFrame:
+    """使用配置和指定日期范围从iFind获取公告"""
+    print(f"--- 1. 正在从 iFind 获取 {start_date} 到 {end_date} 的公告数据 ---")
     
     ifind_config = config.get('ifind', {})
     api_token = ifind_config.get('accessToken')
@@ -62,19 +56,34 @@ def get_announcements_from_ifind(config: dict, target_date: str) -> pd.DataFrame
         print("❌ iFind 配置不完整 (accessToken, reportQueryUrl)。")
         return pd.DataFrame()
 
-    # 从原始 payload 复制一份，然后修改日期
     payload = config.get('ifindPayload', {})
     if not payload:
         print("❌ iFind payload 配置 (ifindPayload) 未找到。")
         return pd.DataFrame()
         
-    payload['beginrDate'] = target_date
-    payload['endrDate'] = target_date
+    # -- 根据设置动态选择股票代码列表 --
+    briefing_config = config.get('dailyBriefing', {})
+    stock_source = briefing_config.get('stockSource', 'all')
+    
+    if stock_source == 'custom':
+        codes_list = config.get('customStockPool', '')
+        print("  - 使用 '自选股池' 进行查询。")
+    else:
+        codes_list = payload.get('codes', '')
+        print("  - 使用 '北交所全市场' 进行查询。")
+    
+    if not codes_list:
+        print("❌ 股票代码列表为空，无法查询。")
+        return pd.DataFrame()
+
+    payload['codes'] = codes_list
+    payload['beginrDate'] = start_date
+    payload['endrDate'] = end_date
     
     headers = {"Content-Type": "application/json", "access_token": api_token}
 
     try:
-        response = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=60)
+        response = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=120)
         response.raise_for_status()
         data = response.json()
 
@@ -85,7 +94,7 @@ def get_announcements_from_ifind(config: dict, target_date: str) -> pd.DataFrame
         if 'tables' in data and data['tables'] and 'table' in data['tables'][0]:
             result_data = data['tables'][0]['table']
             if not result_data or not result_data.get('reportDate'):
-                print("✅ iFind API 调用成功，但当天无任何公告。")
+                print(f"✅ iFind API 调用成功，但 {start_date} 到 {end_date} 期间无任何相关公告。")
                 return pd.DataFrame()
             
             result_df = pd.DataFrame(result_data)
@@ -104,72 +113,52 @@ def get_announcements_from_ifind(config: dict, target_date: str) -> pd.DataFrame
 
 def is_title_important(title: str, config: dict) -> bool:
     """(AI Step 1) 使用配置的快速模型判断标题是否重要"""
+    # ... (此函数无需修改)
     llm_config = config.get('llm', {})
     provider = llm_config.get('provider')
-    
     prompt = f"""作为一名金融分析师助理，你的任务是快速判断一则公告标题是否可能涉及重要内容。重要内容通常关于：业绩预告/快报、利润分配/分红、重组、收购、重大合同、增发、回购、股权激励、高管重大变动、收到监管函/处罚、年报、季报、半年报、做市、反馈意见、专精特新、专利。常规内容通常关于：董事会/监事会/股东大会决议、会议通知、章程修订、日常关联交易。根据以下标题，判断它是否可能重要。请只回答 "YES" 或 "NO"。标题: "{title}" """
-    
     try:
         if provider == "dashscope":
+            from dashscope import Generation
             ds_config = llm_config.get('dashscope', {})
-            api_key = ds_config.get('apiKey')
-            fast_model = ds_config.get('fastModel')
-            if not all([api_key, fast_model]):
-                print("❌ DashScope 快速模型配置不完整。")
-                return False
-
+            api_key, fast_model = ds_config.get('apiKey'), ds_config.get('fastModel')
+            if not all([api_key, fast_model]): return False
             response = Generation.call(model=fast_model, api_key=api_key, prompt=prompt, temperature=0.0)
-            answer = response.output.text.strip().upper()
-            return "YES" in answer
-
+            return "YES" in response.output.text.strip().upper()
         elif provider == "openai":
             from openai import OpenAI
             openai_config = llm_config.get('openai', {})
-            api_key = openai_config.get('apiKey')
-            base_url = openai_config.get('baseUrl')
-            fast_model = openai_config.get('fastModel')
-            if not all([api_key, base_url, fast_model]):
-                print("❌ OpenAI 快速模型配置不完整。")
-                return False
-
+            api_key, base_url, fast_model = openai_config.get('apiKey'), openai_config.get('baseUrl'), openai_config.get('fastModel')
+            if not all([api_key, base_url, fast_model]): return False
             client = OpenAI(api_key=api_key, base_url=base_url)
-            response = client.chat.completions.create(
-                model=fast_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-            )
-            answer = response.choices[0].message.content.strip().upper()
-            return "YES" in answer
-            
+            response = client.chat.completions.create(model=fast_model, messages=[{"role": "user", "content": prompt}], temperature=0.0)
+            return "YES" in response.choices[0].message.content.strip().upper()
         else:
-            print(f"❌ 不支持的LLM提供商: {provider}")
             return False
-
     except Exception as e:
         print(f"  [预筛选失败] 调用快速模型API时出错: {e}")
         return False
 
+
 def get_text_from_pdf_url(pdf_url: str) -> str:
     """从PDF链接中下载并提取文本 (最多5页)"""
+    # ... (此函数无需修改)
     if not pdf_url or not pdf_url.startswith('http'): return ""
     try:
         response = requests.get(pdf_url, timeout=30)
         response.raise_for_status()
-        
         with io.BytesIO(response.content) as pdf_file:
             with pdfplumber.open(pdf_file) as pdf:
                 return "".join(page.extract_text() for i, page in enumerate(pdf.pages) if page.extract_text() and i < 5)
-    except Exception as e:
-        print(f"  [处理失败] PDF 文本提取失败: {e}")
+    except Exception:
         return ""
 
 def analyze_announcement(text: str, title: str, config: dict) -> dict:
     """(AI Step 2) 使用配置的深度模型分析公告内容"""
+    # ... (此函数无需修改)
     if not text: return {"error": "文本为空"}
-
     llm_config = config.get('llm', {})
     provider = llm_config.get('provider')
-    
     prompt = f"""作为一名专业的金融分析师，请分析以下这篇来自北交所的上市公司公告。公告标题: "{title}" 公告内容:\n---\n{text[:8000]}""" \
              f"""\n---\n请根据内容，以JSON格式返回你的分析，包含三个字段：1. "summary": (String)""" \
              f""" 用不超过3句话，精准地总结公告的核心内容。2. "importance": (Integer)""" \
@@ -177,59 +166,41 @@ def analyze_announcement(text: str, title: str, config: dict) -> dict:
              f""" 代表可能引发股价剧烈波动的重大事件。3. "reason": (String)""" \
              f""" 用一句话解释你给出该重要性评分的理由。""" \
              f""" 重要：你的回答必须包含一个能被直接解析的JSON代码块。"""
-
     try:
         if provider == "dashscope":
+            from dashscope import Generation
             ds_config = llm_config.get('dashscope', {})
-            api_key = ds_config.get('apiKey')
-            deep_model = ds_config.get('deepModel', 'qwen-plus')
+            api_key, deep_model = ds_config.get('apiKey'), ds_config.get('deepModel')
             if not api_key: return {"error": "DashScope API Key 未配置。"}
-
             response = Generation.call(model=deep_model, api_key=api_key, prompt=prompt, temperature=0.1)
             if response.status_code == 200 and response.output and response.output.text:
                 return extract_json_from_string(response.output.text)
-            else:
-                print(f"  [分析失败] DashScope API调用失败: {response.message}")
-                return {"error": f"API Error: {response.message}"}
-
+            else: return {"error": f"API Error: {response.message}"}
         elif provider == "openai":
-            # 动态导入
             from openai import OpenAI
-
             openai_config = llm_config.get('openai', {})
-            api_key = openai_config.get('apiKey')
-            base_url = openai_config.get('baseUrl')
-            model = openai_config.get('model')
-            if not all([api_key, base_url, model]):
-                return {"error": "OpenAI 兼容模型的配置不完整 (apiKey, baseUrl, model)。"}
-
+            api_key, base_url, deep_model = openai_config.get('apiKey'), openai_config.get('baseUrl'), openai_config.get('deepModel')
+            if not all([api_key, base_url, deep_model]): return {"error": "OpenAI 深度模型配置不完整。"}
             client = OpenAI(api_key=api_key, base_url=base_url)
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                response_format={"type": "json_object"} # 请求JSON输出
-            )
-            # OpenAI 的 JSON mode 会直接返回一个可解析的JSON字符串
+            response = client.chat.completions.create(model=deep_model, messages=[{"role": "user", "content": prompt}], temperature=0.1, response_format={"type": "json_object"})
             return json.loads(response.choices[0].message.content)
-
         else:
             return {"error": f"不支持的LLM提供商: {provider}"}
-
     except Exception as e:
         print(f"  [分析失败] 调用深度模型API时出错: {e}")
         return {"error": str(e)}
 
-def generate_html_briefing(analyzed_announcements: list, date_str: str) -> str:
+def generate_html_briefing(analyzed_announcements: list, start_date: str, end_date: str) -> str:
     """生成格式化的每日简报 HTML 内容"""
-    important_announcements = sorted(
-        [ann for ann in analyzed_announcements if 'importance' in ann and ann.get('importance', 0) >= 3],
-        key=lambda x: x.get('importance', 0),
-        reverse=True
-    )
+    # ... (更新标题)
+    if start_date == end_date:
+        date_str = start_date
+    else:
+        date_str = f"{start_date} 至 {end_date}"
     
-    html_template = """
-<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>北交所公告每日简报 - {date_str}</title><style>
+    important_announcements = sorted([ann for ann in analyzed_announcements if 'importance' in ann and ann.get('importance', 0) >= 3], key=lambda x: x.get('importance', 0), reverse=True)
+    html_template = f"""
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>北交所公告简报 - {date_str}</title><style>
 body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }}
 .container {{ max-width: 900px; margin: 20px auto; background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08); }}
 h1 {{ color: #1a3a6e; border-bottom: 2px solid #1a3a6e; padding-bottom: 10px; font-size: 24px; }}
@@ -243,12 +214,11 @@ h1 {{ color: #1a3a6e; border-bottom: 2px solid #1a3a6e; padding-bottom: 10px; fo
 .label {{ font-weight: bold; color: #555; }}
 .link {{ display: inline-block; margin-top: 15px; font-size: 13px; color: #007bff; text-decoration: none; }}
 .no-announcements {{ text-align: center; padding: 40px; color: #999; }}
-</style></head><body><div class="container"><h1>北交所公告每日简报 - {date_str}</h1>
+</style></head><body><div class="container"><h1>北交所公告简报 - {date_str}</h1>
     """
-    html_content = html_template.format(date_str=date_str)
-
+    html_content = html_template
     if not important_announcements:
-        html_content += '<div class="no-announcements">今日无重要公告（或所有公告经AI分析后均不重要）。</div>'
+        html_content += '<div class="no-announcements">该时段内无重要公告（或所有公告经AI分析后均不重要）。</div>'
     else:
         for ann in important_announcements:
             stars_html = "".join(['<span class="star-filled">★</span>' if i < ann.get('importance', 0) else '<span class="star-empty">★</span>' for i in range(5)])
@@ -260,17 +230,16 @@ h1 {{ color: #1a3a6e; border-bottom: 2px solid #1a3a6e; padding-bottom: 10px; fo
             <p class="reason"><span class="label">理由:</span> {ann.get('reason', '无理由')}</p>
             <a class="link" href="{ann.get('pdfURL', '#')}" target="_blank">查看PDF原文 &rarr;</a>
         </div>"""
-    
     html_content += "</div></body></html>"
     return html_content
 
 # ====================================================================
-# 3. 主运行逻辑
+# 4. 主运行逻辑
 # ====================================================================
 
-def main(config: dict, target_date: str):
-    """主函数，接收配置和日期作为参数"""
-    announcements_df = get_announcements_from_ifind(config, target_date)
+def main(config: dict, start_date: str, end_date: str):
+    """主函数，接收配置和日期范围作为参数"""
+    announcements_df = get_announcements_from_ifind(config, start_date, end_date)
 
     if announcements_df.empty:
         print("程序结束。")
@@ -281,28 +250,20 @@ def main(config: dict, target_date: str):
 
     for index, row in announcements_df.iterrows():
         title, pdf_url, sec_name = row.get('reportTitle'), row.get('pdfURL'), row.get('secName')
-        
         if not all([title, pdf_url, sec_name]) or not pdf_url.startswith('http'):
             print(f"\n[{index+1}/{len(announcements_df)}] **警告**: 数据不完整或PDF链接无效，跳过。")
             continue
-
         print(f"\n[{index+1}/{len(announcements_df)}] 预筛选: {sec_name} - '{title}'")
-
         if not is_title_important(title, config):
             print("  -> AI初判: 不重要，跳过深度分析。")
             continue
-        
         print("  -> AI初判: **可能重要**，进行深度分析。")
         announcement_text = get_text_from_pdf_url(pdf_url)
-        
         if len(announcement_text) < 50:
             print("  [处理失败] 提取到的文本过短，跳过。")
             continue
-
-        time.sleep(1) # 避免过于频繁的API请求
-        
+        time.sleep(1)
         analysis_result = analyze_announcement(announcement_text, title, config)
-
         if "summary" in analysis_result and "importance" in analysis_result:
             full_analysis = {**row.to_dict(), **analysis_result}
             analyzed_list.append(full_analysis)
@@ -310,15 +271,20 @@ def main(config: dict, target_date: str):
         else:
             print(f"  [分析失败] {analysis_result.get('error', '未知错误')}")
 
-    html_report = generate_html_briefing(analyzed_list, target_date)
+    html_report = generate_html_briefing(analyzed_list, start_date, end_date)
     
     # --- 文件保存 ---
-    # 输出目录为 backend/generated_reports/
     output_dir = os.path.join(os.path.dirname(__file__), '..', 'generated_reports')
     os.makedirs(output_dir, exist_ok=True)
     
-    date_formatted = datetime.strptime(target_date, "%Y-%m-%d").strftime("%Y%m%d")
-    filename = f"daily_briefing_{date_formatted}.html"
+    start_date_fmt = datetime.strptime(start_date, "%Y-%m-%d").strftime("%Y%m%d")
+    end_date_fmt = datetime.strptime(end_date, "%Y-%m-%d").strftime("%Y%m%d")
+    
+    if start_date_fmt == end_date_fmt:
+        filename = f"daily_briefing_{start_date_fmt}.html"
+    else:
+        filename = f"daily_briefing_{start_date_fmt}_{end_date_fmt}.html"
+        
     output_path = os.path.join(output_dir, filename)
 
     try:
@@ -332,16 +298,12 @@ def main(config: dict, target_date: str):
         print(f"\n[错误] 无法保存文件到指定路径: {e}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="生成北交所每日公告简报")
-    parser.add_argument(
-        "--date", 
-        type=str, 
-        default=datetime.now().strftime("%Y-%m-%d"),
-        help="目标日期，格式 YYYY-MM-DD"
-    )
+    parser = argparse.ArgumentParser(description="生成北交所公告简报")
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    parser.add_argument("--start-date", type=str, default=today_str, help="开始日期，格式 YYYY-MM-DD")
+    parser.add_argument("--end-date", type=str, default=today_str, help="结束日期，格式 YYYY-MM-DD")
     args = parser.parse_args()
     
     main_config = get_config()
     if main_config:
-        main(main_config, args.date)
-
+        main(main_config, args.start_date, args.end_date)

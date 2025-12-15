@@ -1,6 +1,6 @@
 {
   "name": "bse-toolkit-v1.2",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "北交所辅助决策系统",
   "scripts": {

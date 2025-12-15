@@ -18,18 +18,19 @@
     "basicDataUrl": "https://quantapi.51ifind.com/api/v1/basic_data_service",
     "historyDataUrl": "https://quantapi.51ifind.com/api/v1/history_data",
     "reportQueryUrl": "https://quantapi.51ifind.com/api/v1/report_query",
-    "reportPeriod": "3",
-    "tableType": "1"
+    "reportPeriod": "3"
   },
+  "dailyBriefing": {
+    "stockSource": "all"
+  },
+  "customStockPool": "833274.BJ,832735.BJ,832419.BJ",
   "ifindPayload": {
     "codes": "920000.BJ,920001.BJ...",
     "functionpara": {
       "reportType": "901"
     },
-    "beginrDate": "YYYY-MM-DD",
-    "endrDate": "YYYY-MM-DD",
     "outputpara": "reportDate:Y,secName:Y,reportTitle:Y,pdfURL:Y"
   },
-  "ticker": "920185.BJ",
-  "userInfo": "Default user info..."
+  "ticker": "920185.BJ"
 }
+
