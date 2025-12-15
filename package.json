@@ -1,0 +1,16 @@
+{
+  "name": "bse-toolkit-v1.2",
+  "version": "1.2.0",
+  "private": true,
+  "description": "北交所辅助决策系统",
+  "scripts": {
+    "start-backend": "cd backend && uvicorn main:app --port 9200",
+    "start-frontend": "cd frontend && npm run dev",
+    "open-browser": "sleep 5 && open-cli http://localhost:9201",
+    "start": "concurrently --kill-others-on-fail \"npm:start-backend\" \"npm:start-frontend\" \"npm:open-browser\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "open-cli": "^8.0.0"
+  }
+}
