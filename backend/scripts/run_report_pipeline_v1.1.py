@@ -4,6 +4,7 @@ import sys
 import glob
 import pandas as pd
 import re
+import shutil
 
 # Try to import matplotlib, provide guidance if it fails.
 try:
@@ -174,6 +175,22 @@ def main():
     if not run_step(html_command, "第4步: 转换增强版报告为 HTML", working_dir=report_dir):
         sys.exit(1)
         
+    # --- 第5步: 移动 HTML 报告到 generated_reports ---
+    print("--- 正在移动报告文件 ---")
+    generated_reports_dir = os.path.join(base_dir, "..", "generated_reports")
+    os.makedirs(generated_reports_dir, exist_ok=True)
+    
+    # 查找最新生成的 HTML (在 report_dir 中)
+    list_of_htmls = glob.glob(os.path.join(report_dir, '*.html'))
+    if list_of_htmls:
+        latest_html = max(list_of_htmls, key=os.path.getctime)
+        dest_path = os.path.join(generated_reports_dir, os.path.basename(latest_html))
+        shutil.copy2(latest_html, dest_path)
+        print(f"✅ 报告已移动至: {dest_path}\n")
+    else:
+        print("❌ 未在 report 目录找到生成的 HTML 文件。")
+        sys.exit(1)
+
     print("="*60)
     print("🎉 全部流程执行完毕！")
     print("="*60)

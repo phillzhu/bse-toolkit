@@ -44,7 +44,7 @@ def extract_json_from_string(text: str) -> dict:
         print("  [解析警告] 提取的字符串无法被解析为JSON。")
         return {"error": "Failed to decode string as JSON"}
 
-def get_announcements_from_ifind(config: dict, start_date: str, end_date: str) -> pd.DataFrame:
+def get_announcements_from_ifind(config: dict, start_date: str, end_date: str, stock_source: str = 'all') -> pd.DataFrame:
     """使用配置和指定日期范围从iFind获取公告"""
     print(f"--- 1. 正在从 iFind 获取 {start_date} 到 {end_date} 的公告数据 ---")
     
@@ -62,9 +62,6 @@ def get_announcements_from_ifind(config: dict, start_date: str, end_date: str) -
         return pd.DataFrame()
         
     # -- 根据设置动态选择股票代码列表 --
-    briefing_config = config.get('dailyBriefing', {})
-    stock_source = briefing_config.get('stockSource', 'all')
-    
     if stock_source == 'custom':
         codes_list = config.get('customStockPool', '')
         print("  - 使用 '自选股池' 进行查询。")
@@ -76,14 +73,29 @@ def get_announcements_from_ifind(config: dict, start_date: str, end_date: str) -
         print("❌ 股票代码列表为空，无法查询。")
         return pd.DataFrame()
 
-    payload['codes'] = codes_list
-    payload['beginrDate'] = start_date
-    payload['endrDate'] = end_date
+    # 构造请求体
+    # 注意：必须创建一个新的字典，避免修改原始配置中的 payload 对象
+    request_payload = payload.copy()
+    request_payload['codes'] = codes_list
+    request_payload['beginrDate'] = start_date
+    request_payload['endrDate'] = end_date
+    
+    # 严格从 config.json 读取 outputpara
+    if 'outputpara' in payload:
+        request_payload['outputpara'] = payload['outputpara']
+    else:
+        # 如果 config.json 中没有定义，使用默认值
+        request_payload['outputpara'] = "reportDate:Y,secName:Y,reportTitle:Y,pdfURL:Y"
+
+    # 移除之前可能错误添加的 'reqBody' 嵌套
+    # 根据 notebook 示例，iFind API 接受扁平的 JSON 结构
+    final_payload = request_payload
     
     headers = {"Content-Type": "application/json", "access_token": api_token}
 
     try:
-        response = requests.post(api_url, headers=headers, data=json.dumps(payload), timeout=120)
+        print(f"  [DEBUG] Sending Payload: {json.dumps(final_payload, ensure_ascii=False)[:200]}...") # Log payload start
+        response = requests.post(api_url, headers=headers, data=json.dumps(final_payload), timeout=120)
         response.raise_for_status()
         data = response.json()
 
@@ -237,39 +249,39 @@ h1 {{ color: #1a3a6e; border-bottom: 2px solid #1a3a6e; padding-bottom: 10px; fo
 # 4. 主运行逻辑
 # ====================================================================
 
-def main(config: dict, start_date: str, end_date: str):
+def main(config: dict, start_date: str, end_date: str, stock_source: str):
     """主函数，接收配置和日期范围作为参数"""
-    announcements_df = get_announcements_from_ifind(config, start_date, end_date)
-
-    if announcements_df.empty:
-        print("程序结束。")
-        return
+    announcements_df = get_announcements_from_ifind(config, start_date, end_date, stock_source)
 
     analyzed_list = []
-    print("\n--- 2. 开始进行公告筛选和深度分析 ---")
+    
+    if not announcements_df.empty:
+        print("\n--- 2. 开始进行公告筛选和深度分析 ---")
 
-    for index, row in announcements_df.iterrows():
-        title, pdf_url, sec_name = row.get('reportTitle'), row.get('pdfURL'), row.get('secName')
-        if not all([title, pdf_url, sec_name]) or not pdf_url.startswith('http'):
-            print(f"\n[{index+1}/{len(announcements_df)}] **警告**: 数据不完整或PDF链接无效，跳过。")
-            continue
-        print(f"\n[{index+1}/{len(announcements_df)}] 预筛选: {sec_name} - '{title}'")
-        if not is_title_important(title, config):
-            print("  -> AI初判: 不重要，跳过深度分析。")
-            continue
-        print("  -> AI初判: **可能重要**，进行深度分析。")
-        announcement_text = get_text_from_pdf_url(pdf_url)
-        if len(announcement_text) < 50:
-            print("  [处理失败] 提取到的文本过短，跳过。")
-            continue
-        time.sleep(1)
-        analysis_result = analyze_announcement(announcement_text, title, config)
-        if "summary" in analysis_result and "importance" in analysis_result:
-            full_analysis = {**row.to_dict(), **analysis_result}
-            analyzed_list.append(full_analysis)
-            print(f"  [分析完成] 重要性评分: {analysis_result['importance']}/5。")
-        else:
-            print(f"  [分析失败] {analysis_result.get('error', '未知错误')}")
+        for index, row in announcements_df.iterrows():
+            title, pdf_url, sec_name = row.get('reportTitle'), row.get('pdfURL'), row.get('secName')
+            if not all([title, pdf_url, sec_name]) or not pdf_url.startswith('http'):
+                print(f"\n[{index+1}/{len(announcements_df)}] **警告**: 数据不完整或PDF链接无效，跳过。")
+                continue
+            print(f"\n[{index+1}/{len(announcements_df)}] 预筛选: {sec_name} - '{title}'")
+            if not is_title_important(title, config):
+                print("  -> AI初判: 不重要，跳过深度分析。")
+                continue
+            print("  -> AI初判: **可能重要**，进行深度分析。")
+            announcement_text = get_text_from_pdf_url(pdf_url)
+            if len(announcement_text) < 50:
+                print("  [处理失败] 提取到的文本过短，跳过。")
+                continue
+            time.sleep(1)
+            analysis_result = analyze_announcement(announcement_text, title, config)
+            if "summary" in analysis_result and "importance" in analysis_result:
+                full_analysis = {**row.to_dict(), **analysis_result}
+                analyzed_list.append(full_analysis)
+                print(f"  [分析完成] 重要性评分: {analysis_result['importance']}/5。")
+            else:
+                print(f"  [分析失败] {analysis_result.get('error', '未知错误')}")
+    else:
+        print("未获取到公告数据，准备生成空报告。")
 
     html_report = generate_html_briefing(analyzed_list, start_date, end_date)
     
@@ -298,6 +310,9 @@ def main(config: dict, start_date: str, end_date: str):
         print(f"\n[错误] 无法保存文件到指定路径: {e}")
 
 if __name__ == "__main__":
+    import sys
+    print(f"[DEBUG] Arguments received: {sys.argv}")
+
     parser = argparse.ArgumentParser(description="生成北交所公告简报")
     today_str = datetime.now().strftime("%Y-%m-%d")
     
@@ -305,6 +320,7 @@ if __name__ == "__main__":
     parser.add_argument("--date", type=str, default=None, help="指定单日日期，格式 YYYY-MM-DD。如果使用此参数，将忽略 --start-date 和 --end-date")
     parser.add_argument("--start-date", type=str, default=today_str, help="开始日期，格式 YYYY-MM-DD")
     parser.add_argument("--end-date", type=str, default=today_str, help="结束日期，格式 YYYY-MM-DD")
+    parser.add_argument("--stock-source", type=str, default="all", help="股票代码来源: 'all' (全市场) 或 'custom' (自选股)")
     
     args = parser.parse_args()
     
@@ -318,4 +334,4 @@ if __name__ == "__main__":
         
     main_config = get_config()
     if main_config:
-        main(main_config, start_date, end_date)
+        main(main_config, start_date, end_date, args.stock_source)

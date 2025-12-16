@@ -16,16 +16,15 @@ app = FastAPI()
 backend_dir = os.path.dirname(os.path.abspath(__file__))
 scripts_dir = os.path.join(backend_dir, "scripts")
 reports_dir = os.path.join(backend_dir, "generated_reports")
-investment_reports_dir = os.path.join(scripts_dir, "report")
+investment_reports_dir = reports_dir
 
 os.makedirs(reports_dir, exist_ok=True)
-os.makedirs(investment_reports_dir, exist_ok=True)
 
 config_path = os.path.join(backend_dir, "config.json")
 config_example_path = os.path.join(backend_dir, "config.example.json")
 
 app.mount("/reports", StaticFiles(directory=reports_dir), name="reports")
-app.mount("/investment_reports", StaticFiles(directory=investment_reports_dir), name="investment_reports")
+app.mount("/investment_reports", StaticFiles(directory=reports_dir), name="investment_reports")
 
 # ====================================================================
 # 2. Pydantic 模型
@@ -104,23 +103,25 @@ def update_config(new_config: ConfigModel):
 @app.post("/api/run/daily_briefing")
 def run_daily_briefing(request: DailyBriefingRequest):
     """执行每日公告简报脚本，前置检查密钥。"""
+    print(f"--- [DEBUG] Backend received request: startDate={request.startDate}, endDate={request.endDate} ---")
+    
     config = get_config_safely()
     check_secrets(config) # 前置检查
 
-    # 在执行前，将运行时选项写入config，以便脚本读取
-    config['dailyBriefing']['stockSource'] = request.stockSource
-    try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"执行前更新配置文件失败: {e}")
-
-
     script_path = os.path.join(scripts_dir, "daily_briefing.py")
-    command = ["python3", script_path, "--start-date", request.startDate, "--end-date", request.endDate]
+    command = [
+        "python3", 
+        script_path, 
+        "--start-date", request.startDate, 
+        "--end-date", request.endDate,
+        "--stock-source", request.stockSource
+    ]
+    print(f"--- [DEBUG] Executing command: {command} ---")
     
     try:
-        process = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8', cwd=backend_dir)
+        # Increase timeout to 5 minutes (300 seconds)
+        process = subprocess.run(command, capture_output=True, text=True, check=True, encoding='utf-8', cwd=backend_dir, timeout=300)
+        print(f"--- [DEBUG] Script Output:\n{process.stdout}\n-----------------------")
         
         # 构造预期的文件名并返回 URL
         start_date_formatted = datetime.strptime(request.startDate, "%Y-%m-%d").strftime("%Y%m%d")
